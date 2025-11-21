@@ -1,0 +1,51 @@
+# Build directories
+build/
+cmake-build-*/
+
+# CMake cache and artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Compiled executables
+*.exe
+*.out
+sfml_project
+
+# Backup files
+*.backup
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Compiled Object files
+*.o
+*.obj
+*.lo
+*.slo
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.a
+*.lib
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+compile_commands.json
