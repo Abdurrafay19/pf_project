@@ -1,0 +1,15 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build and run",
+            "type": "shell",
+            "command": "cmake -S . -B build && cmake --build build && gnome-terminal -- bash -c './build/sfml_project; exec bash'"
+        },
+        {
+            "label": "build only",
+            "type": "shell",
+            "command": "cmake -S . -B build && cmake --build build"
+        }
+    ]
+}

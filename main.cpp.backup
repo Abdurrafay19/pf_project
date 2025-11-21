@@ -1,0 +1,1393 @@
+#include <SFML/Graphics.hpp>
+#include <iostream>
+#include <cstdlib>
+#include <ctime>
+using namespace std;
+using namespace sf;
+
+// Grid Configuration
+const int gridRows = 23;
+const int gridColumns = 15;
+const int cellSize = 40;
+const int gridMargin = 40; // margin on all four sides for the grid
+
+// Game State Constants
+const int stateMenu = 0;
+const int statePlaying = 1;
+const int stateInstructions = 2;
+const int stateGameOver = 3;
+const int stateLevelUp = 4;
+const int stateVictory = 5;
+const int statePaused = 6;
+
+// Grid Cell Type Constants
+const int cellEmpty = 0;
+const int cellSpaceship = 1;
+const int cellMeteor = 2;
+const int cellPlayerBullet = 3;
+const int cellEnemy = 4;
+const int cellBoss = 5;
+const int cellBossBullet = 6;
+
+int main() {
+    // Seed random number generator
+    srand(static_cast<unsigned int>(time(0)));
+
+    // Window Configuration
+    const int windowWidth = gridColumns * cellSize + gridMargin * 2 + 500; // extra space for text
+    const int windowHeight = gridRows * cellSize + gridMargin * 2;
+    RenderWindow window(VideoMode(windowWidth, windowHeight), "Space Shooter");
+    window.setFramerateLimit(60);
+
+    // Game State Variables
+    int currentGameState = stateMenu;
+    int selectedMenuIndex = 0; // Track which menu item is selected (0-3 for menu, 0-1 for game over)
+    
+    // Player Stats
+    int playerLives = 3;
+    int playerScore = 0;
+    int currentLevel = 1;
+    const int maxLevel = 5;
+    
+    // Invincibility System
+    bool isPlayerInvincible = false;
+    Clock invincibilityTimerClock;
+    const float invincibilityDuration = 1.0f; // 1 second invincibility
+    
+    // Level Up State
+    Clock levelUpTimerClock;
+    bool shouldShowLevelUpText = true; // For blinking effect
+    Clock levelUpBlinkClock;
+
+    // Game Grid (stores cell types: 0=empty, 1=spaceship, 2=meteor, 3=player bullet, 4=enemy, 5=boss, 6=boss bullet)
+    int gameGrid[gridRows][gridColumns] = {0};
+
+    // Hit Effect System (max 50 active hit effects)
+    const int maxHitEffects = 50;
+    int hitEffectRowPositions[maxHitEffects] = {0};
+    int hitEffectColumnPositions[maxHitEffects] = {0};
+    float hitEffectTimers[maxHitEffects] = {0.0f};
+    bool hitEffectIsActive[maxHitEffects] = {false};
+    const float hitEffectDisplayDuration = 0.3f; // show for 0.3 seconds
+
+
+    // Spaceship Position
+    int spaceshipColumn = gridColumns / 2; // start in the middle
+    gameGrid[gridRows-1][spaceshipColumn] = cellSpaceship; // place spaceship at bottom center   
+    Texture spaceshipTexture;
+    if (!spaceshipTexture.loadFromFile("assets/images/player.png")) {
+        cerr << "Failed to load spaceship texture" << endl;
+        return -1;
+    }
+    Sprite spaceship;
+    spaceship.setTexture(spaceshipTexture);
+    spaceship.setScale(
+        static_cast<float>(CELL_SIZE) / spaceshipTexture.getSize().x,
+        static_cast<float>(CELL_SIZE) / spaceshipTexture.getSize().y
+    );
+
+    // Background Setup for the whole grid
+    Texture bgTexture;
+    if (!bgTexture.loadFromFile("assets/images/backgroundColor.png")) {
+        cerr << "Failed to load background texture" << endl;
+        return -1;
+    }
+    Sprite background;
+    background.setTexture(bgTexture);
+    background.setScale(
+        static_cast<float>(COLS * CELL_SIZE) / bgTexture.getSize().x,
+        static_cast<float>(ROWS * CELL_SIZE) / bgTexture.getSize().y
+    );
+    background.setPosition(MARGIN, MARGIN);
+
+    // Prepare a thin black border (game box) that separates the grid from the surrounding background
+    RectangleShape gameBox(Vector2f(COLS * CELL_SIZE, ROWS * CELL_SIZE));
+    gameBox.setFillColor(Color::Transparent);
+    gameBox.setOutlineThickness(5);
+    gameBox.setOutlineColor(Color::Black);
+    gameBox.setPosition(MARGIN, MARGIN);
+
+    // Meteors setup
+    Texture meteorTexture;
+    if (!meteorTexture.loadFromFile("assets/images/meteorSmall.png")) {
+        cerr << "Failed to load meteor texture" << endl;
+        return -1;
+    }
+    Sprite meteor;
+    meteor.setTexture(meteorTexture);
+    meteor.setScale(
+        static_cast<float>(CELL_SIZE) / meteorTexture.getSize().x,
+        static_cast<float>(CELL_SIZE) / meteorTexture.getSize().y
+    );
+
+    /// Enemies Setup
+
+
+    // Simple Enemy
+    Texture enemyTexture;
+    if (!enemyTexture.loadFromFile("assets/images/enemyUFO.png")) {
+        cerr << "Failed to load enemy texture" << endl;
+        return -1;
+    }
+    Sprite enemy;
+    enemy.setTexture(enemyTexture);
+    enemy.setScale(
+        static_cast<float>(CELL_SIZE) / enemyTexture.getSize().x,
+        static_cast<float>(CELL_SIZE) / enemyTexture.getSize().y
+    );
+
+    // Boss Enemy
+    Texture bossEnemyTexture;
+    if (!bossEnemyTexture.loadFromFile("assets/images/enemyShip.png")) {
+        cerr << "Failed to load boss enemy texture" << endl;
+        return -1;
+    }
+    Sprite bossEnemy;
+    bossEnemy.setTexture(bossEnemyTexture);
+    bossEnemy.setScale(
+        static_cast<float>(CELL_SIZE) / bossEnemyTexture.getSize().x,
+        static_cast<float>(CELL_SIZE) / bossEnemyTexture.getSize().y
+    );
+
+
+    // Bullet Setup
+    Texture bulletTexture;
+    if (!bulletTexture.loadFromFile("assets/images/laserRed.png")) {
+        cerr << "Failed to load bullet texture" << endl;
+        return -1;
+    }
+    Sprite bullet;
+    bullet.setTexture(bulletTexture);
+    // Scale bullet to be narrower (30% width) and slightly shorter (80% height) than cell
+    bullet.setScale(
+        static_cast<float>(CELL_SIZE * 0.3f) / bulletTexture.getSize().x,
+        static_cast<float>(CELL_SIZE * 0.8f) / bulletTexture.getSize().y
+    );
+
+    // Bullet Hit Setup
+    Texture bulletHitTexture;
+    if (!bulletHitTexture.loadFromFile("assets/images/laserRedShot.png")) {
+        cerr << "Failed to load bullet hit texture" << endl;
+        return -1;
+    }
+    Sprite bulletHit;
+    bulletHit.setTexture(bulletHitTexture);
+    bulletHit.setScale(
+        static_cast<float>(CELL_SIZE) / bulletHitTexture.getSize().x,
+        static_cast<float>(CELL_SIZE) / bulletHitTexture.getSize().y
+    );
+    
+    // Boss Bullet Setup
+    Texture bossBulletTexture;
+    if (!bossBulletTexture.loadFromFile("assets/images/laserGreen.png")) {
+        cerr << "Failed to load boss bullet texture" << endl;
+        return -1;
+    }
+    Sprite bossBullet;
+    bossBullet.setTexture(bossBulletTexture);
+    bossBullet.setScale(
+        static_cast<float>(CELL_SIZE * 0.3f) / bossBulletTexture.getSize().x,
+        static_cast<float>(CELL_SIZE * 0.8f) / bossBulletTexture.getSize().y
+    );
+
+    // Boss Bullet Hit Setup
+    Texture bossBulletHitTexture;
+    if (!bossBulletHitTexture.loadFromFile("assets/images/laserGreenShot.png")) {
+        cerr << "Failed to load boss bullet hit texture" << endl;
+        return -1;
+    }
+    Sprite bossBulletHit;
+    bossBulletHit.setTexture(bossBulletHitTexture);
+    bossBulletHit.setScale(
+        static_cast<float>(CELL_SIZE) / bossBulletHitTexture.getSize().x,
+        static_cast<float>(CELL_SIZE) / bossBulletHitTexture.getSize().y
+    );
+
+
+
+
+    // Menu Background Setup (using same background texture for now)
+    Texture menuBgTexture;
+    if (!menuBgTexture.loadFromFile("assets/images/backgroundColor.png")) {
+        cerr << "Failed to load menu background texture" << endl;
+        return -1;
+    }
+    Sprite menuBackground;
+    menuBackground.setTexture(menuBgTexture);
+    menuBackground.setScale(
+        static_cast<float>(windowWidth) / menuBgTexture.getSize().x,
+        static_cast<float>(windowHeight) / menuBgTexture.getSize().y
+    );
+    menuBackground.setPosition(0, 0);
+
+    // Load font for the title text and menu
+    Font font;
+    if (!font.loadFromFile("assets/fonts/pixel-font.ttf")) {
+        cerr << "Failed to load font" << endl;
+        return -1;
+    }
+
+    // Menu title
+    Text menuTitle("SPACE SHOOTER", font, 72);
+    menuTitle.setFillColor(Color::Yellow);
+    menuTitle.setPosition(windowWidth / 2 - 250, 100);
+
+    // Menu items (using char arrays instead of strings)
+    Text menuItems[4];
+    const char menuTexts[4][20] = {"Start Game", "Load Saved Game", "Instructions", "Exit"};
+    for (int i = 0; i < 4; i++) {
+        menuItems[i].setFont(font);
+        menuItems[i].setString(menuTexts[i]);
+        menuItems[i].setCharacterSize(48);
+        menuItems[i].setFillColor(Color::White);
+        menuItems[i].setPosition(windowWidth / 2 - 150, 300 + i * 80);
+    }
+
+    // Menu navigation instructions
+    Text menuInstructions("Use UP/DOWN or W/S to navigate  |  ENTER or SPACE to select", font, 24);
+    menuInstructions.setFillColor(Color(150, 150, 150)); // Gray color
+    menuInstructions.setPosition(windowWidth / 2 - 320, windowHeight - 80);
+
+    // Game title (for playing state)
+    Text title("Space  Shooter  Game", font, 48);
+    title.setFillColor(Color::Yellow);
+    // place title to the right of the game box, respect top margin
+    title.setPosition(MARGIN + COLS * CELL_SIZE + 20, MARGIN);
+
+    // Lives display
+    Text livesText("Lives: 3", font, 36);
+    livesText.setFillColor(Color::White);
+    livesText.setPosition(MARGIN + COLS * CELL_SIZE + 20, MARGIN + 150);
+
+    // Score display
+    Text scoreText("Score: 0", font, 36);
+    scoreText.setFillColor(Color::White);
+    scoreText.setPosition(MARGIN + COLS * CELL_SIZE + 20, MARGIN + 200);
+
+    // Level display
+    Text levelText("Level: 1", font, 36);
+    levelText.setFillColor(Color::White);
+    levelText.setPosition(MARGIN + COLS * CELL_SIZE + 20, MARGIN + 250);
+
+    // Game Over screen
+    Text gameOverTitle("GAME OVER", font, 72);
+    gameOverTitle.setFillColor(Color::Red);
+    gameOverTitle.setPosition(windowWidth / 2 - 200, 100);
+
+    // Game over menu items
+    Text gameOverItems[2];
+    const char gameOverTexts[2][20] = {"Restart", "Main Menu"};
+    for (int i = 0; i < 2; i++) {
+        gameOverItems[i].setFont(font);
+        gameOverItems[i].setString(gameOverTexts[i]);
+        gameOverItems[i].setCharacterSize(48);
+        gameOverItems[i].setFillColor(Color::White);
+        gameOverItems[i].setPosition(windowWidth / 2 - 100, 300 + i * 80);
+    }
+
+    // Game over navigation instructions
+    Text gameOverInstructions("Use UP/DOWN or W/S to navigate  |  ENTER or SPACE to select", font, 24);
+    gameOverInstructions.setFillColor(Color(150, 150, 150));
+    gameOverInstructions.setPosition(windowWidth / 2 - 320, windowHeight - 80);
+
+    // Level up screen (centered on the playing grid)
+    Text levelUpText("LEVEL UP!", font, 72);
+    levelUpText.setFillColor(Color::Green);
+    // Center on grid: grid starts at MARGIN, is COLS*CELL_SIZE wide
+    float gridCenterX = MARGIN + (COLS * CELL_SIZE) / 2.0f;
+    float gridCenterY = MARGIN + (ROWS * CELL_SIZE) / 2.0f;
+    levelUpText.setPosition(gridCenterX - 180, gridCenterY - 50);
+
+    // Pause screen
+    Text pauseTitle("PAUSED", font, 72);
+    pauseTitle.setFillColor(Color::Cyan);
+    pauseTitle.setPosition(gridCenterX - 120, gridCenterY - 200);
+
+    Text pauseItems[3];
+    const char pauseTexts[3][20] = {"Resume", "Restart", "Main Menu"};
+    for (int i = 0; i < 3; i++) {
+        pauseItems[i].setFont(font);
+        pauseItems[i].setString(pauseTexts[i]);
+        pauseItems[i].setCharacterSize(48);
+        pauseItems[i].setFillColor(Color::White);
+        pauseItems[i].setPosition(gridCenterX - 80, gridCenterY - 50 + i * 80);
+    }
+
+    // Victory screen
+    Text victoryTitle("VICTORY!", font, 72);
+    victoryTitle.setFillColor(Color::Yellow);
+    victoryTitle.setPosition(windowWidth / 2 - 150, 100);
+
+    Text victoryItems[2];
+    const char victoryTexts[2][20] = {"Restart", "Main Menu"};
+    for (int i = 0; i < 2; i++) {
+        victoryItems[i].setFont(font);
+        victoryItems[i].setString(victoryTexts[i]);
+        victoryItems[i].setCharacterSize(48);
+        victoryItems[i].setFillColor(Color::White);
+        victoryItems[i].setPosition(windowWidth / 2 - 100, 300 + i * 80);
+    }
+
+    Text victoryInstructions("Use UP/DOWN or W/S to navigate  |  ENTER or SPACE to select", font, 24);
+    victoryInstructions.setFillColor(Color(150, 150, 150));
+    victoryInstructions.setPosition(windowWidth / 2 - 320, windowHeight - 80);
+
+    // Clock and cooldown for regulated keyboard movement
+    Clock moveClock;
+    Time moveCooldown = milliseconds(100); // adjust this value to taste
+
+    // Meteor spawning and movement timers
+    Clock meteorSpawnClock;
+    Clock meteorMoveClock;
+    float nextSpawnTime = 1.0f + (rand() % 3); // random interval between 1-3 seconds
+
+    // Enemy spawning and movement timers
+    Clock enemySpawnClock;
+    Clock enemyMoveClock;
+    float nextEnemySpawnTime = 2.0f + (rand() % 4); // random interval between 2-5 seconds
+
+    // Boss spawning and movement timers (levels 3+)
+    Clock bossSpawnClock;
+    Clock bossMoveClock;
+    Clock bossBulletMoveClock;
+    float nextBossSpawnTime = 8.0f + (rand() % 5); // random interval between 8-12 seconds
+
+    // Bullet timers
+    Clock bulletMoveClock;
+    Clock bulletFireClock;
+    Time bulletFireCooldown = milliseconds(300); // can fire every 0.3 seconds
+
+    // Hit effect timer
+    Clock hitEffectClock;
+
+    // Menu navigation clock
+    Clock menuClock;
+    Time menuCooldown = milliseconds(200);
+
+    while (window.isOpen()) {
+        Event event;
+        while (window.pollEvent(event)) {
+            if (event.type == Event::Closed)
+                window.close();
+        }
+
+        // Handle menu state
+        if (currentState == STATE_MENU) {
+            // Menu navigation with cooldown
+            if (menuClock.getElapsedTime() >= menuCooldown) {
+                bool menuAction = false;
+                
+                // Navigate menu up/down
+                if (Keyboard::isKeyPressed(Keyboard::Up) || Keyboard::isKeyPressed(Keyboard::W)) {
+                    selectedMenuItem = (selectedMenuItem - 1 + 4) % 4;
+                    menuAction = true;
+                }
+                else if (Keyboard::isKeyPressed(Keyboard::Down) || Keyboard::isKeyPressed(Keyboard::S)) {
+                    selectedMenuItem = (selectedMenuItem + 1) % 4;
+                    menuAction = true;
+                }
+                // Select menu item
+                else if (Keyboard::isKeyPressed(Keyboard::Enter) || Keyboard::isKeyPressed(Keyboard::Space)) {
+                    if (selectedMenuItem == 0) { // Start Game
+                        currentState = STATE_PLAYING;
+                        // Reset game state
+                        lives = 3;
+                        score = 0;
+                        level = 1;
+                        for (int r = 0; r < ROWS; r++) {
+                            for (int c = 0; c < COLS; c++) {
+                                grid[r][c] = 0;
+                            }
+                        }
+                        spaceshipCol = COLS / 2;
+                        grid[ROWS-1][spaceshipCol] = 1;
+                        meteorSpawnClock.restart();
+                        meteorMoveClock.restart();
+                        enemySpawnClock.restart();
+                        enemyMoveClock.restart();
+                        bossSpawnClock.restart();
+                        bossMoveClock.restart();
+                        bossBulletMoveClock.restart();
+                        bulletMoveClock.restart();
+                    }
+                    else if (selectedMenuItem == 3) { // Exit
+                        window.close();
+                    }
+                    menuAction = true;
+                }
+                
+                if (menuAction) {
+                    menuClock.restart();
+                }
+            }
+            
+            // Update menu item colors based on selection
+            for (int i = 0; i < 4; i++) {
+                if (i == selectedMenuItem) {
+                    menuItems[i].setFillColor(Color::Yellow);
+                } else {
+                    menuItems[i].setFillColor(Color::White);
+                }
+            }
+        }
+        // Handle game over state
+        else if (currentState == STATE_GAME_OVER) {
+            // Game over menu navigation with cooldown
+            if (menuClock.getElapsedTime() >= menuCooldown) {
+                bool menuAction = false;
+                
+                // Navigate game over menu up/down
+                if (Keyboard::isKeyPressed(Keyboard::Up) || Keyboard::isKeyPressed(Keyboard::W)) {
+                    selectedMenuItem = (selectedMenuItem - 1 + 2) % 2;
+                    menuAction = true;
+                }
+                else if (Keyboard::isKeyPressed(Keyboard::Down) || Keyboard::isKeyPressed(Keyboard::S)) {
+                    selectedMenuItem = (selectedMenuItem + 1) % 2;
+                    menuAction = true;
+                }
+                // Select game over menu item
+                else if (Keyboard::isKeyPressed(Keyboard::Enter) || Keyboard::isKeyPressed(Keyboard::Space)) {
+                    if (selectedMenuItem == 0) { // Restart
+                        currentState = STATE_PLAYING;
+                        // Reset game state
+                        lives = 3;
+                        score = 0;
+                        level = 1;
+                        for (int r = 0; r < ROWS; r++) {
+                            for (int c = 0; c < COLS; c++) {
+                                grid[r][c] = 0;
+                            }
+                        }
+                        spaceshipCol = COLS / 2;
+                        grid[ROWS-1][spaceshipCol] = 1;
+                        meteorSpawnClock.restart();
+                        meteorMoveClock.restart();
+                        enemySpawnClock.restart();
+                        enemyMoveClock.restart();
+                        bossSpawnClock.restart();
+                        bossMoveClock.restart();
+                        bossBulletMoveClock.restart();
+                        bulletMoveClock.restart();
+                    }
+                    else if (selectedMenuItem == 1) { // Main Menu
+                        currentState = STATE_MENU;
+                        selectedMenuItem = 0;
+                    }
+                    menuAction = true;
+                }
+                
+                if (menuAction) {
+                    menuClock.restart();
+                }
+            }
+            
+            // Update game over item colors based on selection
+            for (int i = 0; i < 2; i++) {
+                if (i == selectedMenuItem) {
+                    gameOverItems[i].setFillColor(Color::Yellow);
+                } else {
+                    gameOverItems[i].setFillColor(Color::White);
+                }
+            }
+        }
+        // Handle playing state
+        else if (currentState == STATE_PLAYING) {
+            // Check for pause
+            if (menuClock.getElapsedTime() >= menuCooldown) {
+                if (Keyboard::isKeyPressed(Keyboard::P)) {
+                    currentState = STATE_PAUSED;
+                    selectedMenuItem = 0;
+                    menuClock.restart();
+                    cout << "Game Paused" << endl;
+                }
+            }
+            
+            // Movement input with cooldown to make controls more accurate (prevents overly fast repeats)
+            if (moveClock.getElapsedTime() >= moveCooldown) {
+                bool moved = false;
+                // Left movement: Left arrow or 'A'
+                if ((Keyboard::isKeyPressed(Keyboard::Left) || Keyboard::isKeyPressed(Keyboard::A)) && spaceshipCol > 0) {
+                    grid[ROWS-1][spaceshipCol] = 0;
+                    spaceshipCol--;
+                    grid[ROWS-1][spaceshipCol] = 1;
+                    cout << "Moved Left to column " << spaceshipCol << endl;
+                    moved = true;
+                }
+                // Right movement: Right arrow or 'D'
+                else if ((Keyboard::isKeyPressed(Keyboard::Right) || Keyboard::isKeyPressed(Keyboard::D)) && spaceshipCol < COLS-1) {
+                    grid[ROWS-1][spaceshipCol] = 0;
+                    spaceshipCol++;
+                    grid[ROWS-1][spaceshipCol] = 1;
+                    cout << "Moved Right to column " << spaceshipCol << endl;
+                    moved = true;
+                }
+
+                if (moved) {
+                    moveClock.restart();
+                }
+            }
+
+        // Fire bullet with spacebar
+        if (Keyboard::isKeyPressed(Keyboard::Space) && bulletFireClock.getElapsedTime() >= bulletFireCooldown) {
+            // Fire bullet from position above spaceship
+            int bulletRow = ROWS - 2; // one row above spaceship
+            if (bulletRow >= 0 && grid[bulletRow][spaceshipCol] == 0) {
+                grid[bulletRow][spaceshipCol] = 3; // 3 represents bullet
+                cout << "Bullet fired from column " << spaceshipCol << endl;
+            }
+            bulletFireCooldown = milliseconds(300);
+            bulletFireClock.restart();
+        }
+
+        // Spawn meteors at random intervals
+        if (meteorSpawnClock.getElapsedTime().asSeconds() >= nextSpawnTime) {
+            int randomCol = rand() % COLS;
+            // Only spawn if top row at that column is empty
+            if (grid[0][randomCol] == 0) {
+                grid[0][randomCol] = 2; // 2 represents meteor
+                cout << "Meteor spawned at column " << randomCol << endl;
+            }
+            meteorSpawnClock.restart();
+            nextSpawnTime = 1.0f + (rand() % 3); // next spawn in 1-3 seconds
+        }
+
+        // Spawn enemies at random intervals (faster at higher levels)
+        if (enemySpawnClock.getElapsedTime().asSeconds() >= nextEnemySpawnTime) {
+            int randomCol = rand() % COLS;
+            // Only spawn if top row at that column is empty
+            if (grid[0][randomCol] == 0) {
+                grid[0][randomCol] = 4; // 4 represents enemy
+                cout << "Enemy spawned at column " << randomCol << endl;
+            }
+            enemySpawnClock.restart();
+            // Spawn rate increases with level: level 1 = 2-5s, level 5 = 0.5-2s
+            float baseTime = 2.5f - (level * 0.4f);
+            float variance = 3.0f - (level * 0.4f);
+            if (baseTime < 0.5f) baseTime = 0.5f;
+            if (variance < 1.0f) variance = 1.0f;
+            nextEnemySpawnTime = baseTime + (rand() % (int)variance);
+        }
+
+        // Spawn bosses at random intervals (level 3 and above)
+        if (level >= 3 && bossSpawnClock.getElapsedTime().asSeconds() >= nextBossSpawnTime) {
+            int randomCol = rand() % COLS;
+            // Only spawn if top row at that column is empty
+            if (grid[0][randomCol] == 0) {
+                grid[0][randomCol] = 5; // 5 represents boss
+                cout << "Boss spawned at column " << randomCol << endl;
+            }
+            bossSpawnClock.restart();
+            // Spawn rate increases with level: level 3 = 8-12s, level 5 = 5-8s
+            float bossBaseTime = 10.0f - ((level - 3) * 1.5f);
+            float bossVariance = 4.0f;
+            if (bossBaseTime < 5.0f) bossBaseTime = 5.0f;
+            nextBossSpawnTime = bossBaseTime + (rand() % (int)bossVariance);
+        }
+
+        // Move meteors down every 0.833 seconds (20% faster than 1.0s)
+        if (meteorMoveClock.getElapsedTime().asSeconds() >= 0.833f) {
+            // Move meteors from bottom to top to avoid overwriting
+            for (int r = ROWS - 1; r >= 0; r--) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 2) { // if there's a meteor
+                        // Check if meteor reached the bottom
+                        if (r == ROWS - 1) {
+                            grid[r][c] = 0; // remove meteor at bottom
+                            cout << "Meteor removed at bottom" << endl;
+                        } else {
+                            grid[r][c] = 0; // clear current position
+                            // Move down only if next row is empty or we're overwriting a meteor
+                            if (grid[r + 1][c] == 0 || grid[r + 1][c] == 2) {
+                                grid[r + 1][c] = 2;
+                            }
+                            // If it hits spaceship (value 1), handle collision
+                            else if (grid[r + 1][c] == 1) {
+                                if (!isInvincible) {
+                                    lives--;
+                                    isInvincible = true;
+                                    invincibilityTimer.restart();
+                                    cout << "Meteor hit spaceship! Lives remaining: " << lives << endl;
+                                    // Check if game over
+                                    if (lives <= 0) {
+                                        currentState = STATE_GAME_OVER;
+                                        selectedMenuItem = 0; // Reset to first option
+                                        cout << "Game Over!" << endl;
+                                    }
+                                }
+                                grid[r + 1][c] = 0; // remove meteor
+                            }
+                            // If it hits bullet (value 3), both get destroyed
+                            else if (grid[r + 1][c] == 3) {
+                                cout << "Meteor destroyed by bullet!" << endl;
+                                grid[r + 1][c] = 0; // both disappear
+                                // Add hit effect
+                                for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                                    if (!hitEffectActive[i]) {
+                                        hitEffectRow[i] = r + 1;
+                                        hitEffectCol[i] = c;
+                                        hitEffectTimer[i] = 0.0f;
+                                        hitEffectActive[i] = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            meteorMoveClock.restart();
+        }
+
+        // Move enemies down (speed increases with level)
+        // Level 1: 0.833s, Level 2: 0.733s, Level 3: 0.633s, Level 4: 0.533s, Level 5: 0.433s
+        float enemyMoveSpeed = 0.833f - ((level - 1) * 0.1f);
+        if (enemyMoveClock.getElapsedTime().asSeconds() >= enemyMoveSpeed) {
+            // Move enemies from bottom to top to avoid overwriting
+            for (int r = ROWS - 1; r >= 0; r--) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 4) { // if there's an enemy
+                        // Check if enemy reached the bottom
+                        if (r == ROWS - 1) {
+                            grid[r][c] = 0; // remove enemy at bottom
+                            lives--; // Decrease life for missing enemy
+                            isInvincible = true;
+                            invincibilityTimer.restart();
+                            cout << "Enemy escaped! Lives remaining: " << lives << endl;
+                            // Check if game over
+                            if (lives <= 0) {
+                                currentState = STATE_GAME_OVER;
+                                selectedMenuItem = 0;
+                                cout << "Game Over!" << endl;
+                            }
+                        } else {
+                            grid[r][c] = 0; // clear current position
+                            // Move down only if next row is empty or we're overwriting an enemy
+                            if (grid[r + 1][c] == 0 || grid[r + 1][c] == 4) {
+                                grid[r + 1][c] = 4;
+                            }
+                            // If it hits spaceship (value 1), handle collision
+                            else if (grid[r + 1][c] == 1) {
+                                if (!isInvincible) {
+                                    lives--;
+                                    isInvincible = true;
+                                    invincibilityTimer.restart();
+                                    cout << "Enemy hit spaceship! Lives remaining: " << lives << endl;
+                                    // Check if game over
+                                    if (lives <= 0) {
+                                        currentState = STATE_GAME_OVER;
+                                        selectedMenuItem = 0; // Reset to first option
+                                        cout << "Game Over!" << endl;
+                                    }
+                                }
+                                grid[r + 1][c] = 0; // remove enemy
+                            }
+                            // If it hits bullet (value 3), enemy destroyed and score increased
+                            else if (grid[r + 1][c] == 3) {
+                                score += 1; // Add 1 point for destroying enemy
+                                cout << "Enemy destroyed by bullet! +1 point. Score: " << score << endl;
+                                grid[r + 1][c] = 0; // both disappear
+                                // Add hit effect
+                                for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                                    if (!hitEffectActive[i]) {
+                                        hitEffectRow[i] = r + 1;
+                                        hitEffectCol[i] = c;
+                                        hitEffectTimer[i] = 0.0f;
+                                        hitEffectActive[i] = true;
+                                        break;
+                                    }
+                                }
+                                // Check for level up
+                                int scoreNeeded = level * 10;
+                                if (level < MAX_LEVEL && score >= scoreNeeded) {
+                                    level++;
+                                    score = 0; // Reset score for next level
+                                    // Clear all enemies and meteors from grid
+                                    for (int r = 0; r < ROWS; r++) {
+                                        for (int c = 0; c < COLS; c++) {
+                                            if (grid[r][c] == 2 || grid[r][c] == 4) {
+                                                grid[r][c] = 0;
+                                            }
+                                        }
+                                    }
+                                    // Move spaceship to center
+                                    grid[ROWS-1][spaceshipCol] = 0;
+                                    spaceshipCol = COLS / 2;
+                                    grid[ROWS-1][spaceshipCol] = 1;
+                                    // Enter level up state
+                                    currentState = STATE_LEVEL_UP;
+                                    levelUpTimer.restart();
+                                    levelUpBlinkClock.restart();
+                                    cout << "Level Up! Now at Level " << level << endl;
+                                } else if (level >= MAX_LEVEL && score >= scoreNeeded) {
+                                    // Victory!
+                                    currentState = STATE_VICTORY;
+                                    selectedMenuItem = 0;
+                                    cout << "Victory! Game Complete!" << endl;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            enemyMoveClock.restart();
+        }
+
+        // Move bosses down (speed increases with level, fires bullets)
+        // Level 3: 0.7s, Level 4: 0.6s, Level 5: 0.5s
+        float bossMoveSpeed = 0.8f - ((level - 3) * 0.1f);
+        if (bossMoveSpeed < 0.5f) bossMoveSpeed = 0.5f;
+        if (bossMoveClock.getElapsedTime().asSeconds() >= bossMoveSpeed) {
+            // Move bosses from bottom to top to avoid overwriting
+            for (int r = ROWS - 1; r >= 0; r--) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 5) { // if there's a boss
+                        // Check if boss reached the bottom
+                        if (r == ROWS - 1) {
+                            grid[r][c] = 0; // remove boss at bottom
+                            lives--; // Decrease life for missing boss
+                            isInvincible = true;
+                            invincibilityTimer.restart();
+                            cout << "Boss escaped! Lives remaining: " << lives << endl;
+                            // Check if game over
+                            if (lives <= 0) {
+                                currentState = STATE_GAME_OVER;
+                                selectedMenuItem = 0;
+                                cout << "Game Over!" << endl;
+                            }
+                        } else {
+                            int nextRow = r + 1;
+                            int nextCell = grid[nextRow][c];
+                            
+                            grid[r][c] = 0; // clear current position
+                            
+                            // Move down only if next row is empty, boss, boss bullet, or meteor/enemy (pass through)
+                            if (nextCell == 0 || nextCell == 5 || nextCell == 6 || nextCell == 2 || nextCell == 4) {
+                                grid[nextRow][c] = 5;
+                            }
+                            // If it hits spaceship (value 1), handle collision
+                            else if (grid[r + 1][c] == 1) {
+                                if (!isInvincible) {
+                                    lives--;
+                                    isInvincible = true;
+                                    invincibilityTimer.restart();
+                                    cout << "Boss hit spaceship! Lives remaining: " << lives << endl;
+                                    // Check if game over
+                                    if (lives <= 0) {
+                                        currentState = STATE_GAME_OVER;
+                                        selectedMenuItem = 0;
+                                        cout << "Game Over!" << endl;
+                                    }
+                                }
+                                grid[r + 1][c] = 0; // remove boss
+                            }
+                            // If it hits bullet (value 3), boss destroyed and score increased (worth 3 points)
+                            else if (grid[r + 1][c] == 3) {
+                                score += 3; // Add 3 points for destroying boss
+                                cout << "Boss destroyed by bullet! +3 points. Score: " << score << endl;
+                                grid[r + 1][c] = 0; // both disappear
+                                // Add hit effect
+                                for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                                    if (!hitEffectActive[i]) {
+                                        hitEffectRow[i] = r + 1;
+                                        hitEffectCol[i] = c;
+                                        hitEffectTimer[i] = 0.0f;
+                                        hitEffectActive[i] = true;
+                                        break;
+                                    }
+                                }
+                                // Check for level up
+                                int scoreNeeded = level * 10;
+                                if (level < MAX_LEVEL && score >= scoreNeeded) {
+                                    level++;
+                                    score = 0;
+                                    // Clear all enemies, meteors, and bosses from grid
+                                    for (int r = 0; r < ROWS; r++) {
+                                        for (int c = 0; c < COLS; c++) {
+                                            if (grid[r][c] == 2 || grid[r][c] == 4 || grid[r][c] == 5 || grid[r][c] == 6) {
+                                                grid[r][c] = 0;
+                                            }
+                                        }
+                                    }
+                                    // Move spaceship to center
+                                    grid[ROWS-1][spaceshipCol] = 0;
+                                    spaceshipCol = COLS / 2;
+                                    grid[ROWS-1][spaceshipCol] = 1;
+                                    // Enter level up state
+                                    currentState = STATE_LEVEL_UP;
+                                    levelUpTimer.restart();
+                                    levelUpBlinkClock.restart();
+                                    cout << "Level Up! Now at Level " << level << endl;
+                                } else if (level >= MAX_LEVEL && score >= scoreNeeded) {
+                                    // Victory!
+                                    currentState = STATE_VICTORY;
+                                    selectedMenuItem = 0;
+                                    cout << "Victory! Game Complete!" << endl;
+                                }
+                            }
+                            // Boss bullet passes through other entities
+                        }
+                    }
+                }
+            }
+            
+            // Now fire bullets from bosses (after they've moved)
+            for (int r = 0; r < ROWS; r++) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 5) { // if there's a boss
+                        // Boss fires bullet (50% chance each movement)
+                        if (r < ROWS - 1 && rand() % 2 == 0) {
+                            int bulletRow = r + 1;
+                            if (bulletRow < ROWS && grid[bulletRow][c] == 0) {
+                                grid[bulletRow][c] = 6; // 6 represents boss bullet
+                                cout << "Boss fired bullet at column " << c << endl;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            bossMoveClock.restart();
+        }
+
+        // Move boss bullets down (2x speed of boss)
+        float bossBulletSpeed = bossMoveSpeed / 2.0f;
+        if (bossBulletMoveClock.getElapsedTime().asSeconds() >= bossBulletSpeed) {
+            // Move boss bullets from bottom to top
+            for (int r = ROWS - 1; r >= 0; r--) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 6) { // if there's a boss bullet
+                        // Check if reached bottom
+                        if (r == ROWS - 1) {
+                            grid[r][c] = 0; // remove at bottom
+                        } else {
+                            grid[r][c] = 0; // clear current position
+                            // If it hits spaceship, handle collision (show hit effect, don't remove spaceship)
+                            if (grid[r + 1][c] == 1) {
+                                if (!isInvincible) {
+                                    lives--;
+                                    isInvincible = true;
+                                    invincibilityTimer.restart();
+                                    cout << "Boss bullet hit spaceship! Lives remaining: " << lives << endl;
+                                    // Check if game over
+                                    if (lives <= 0) {
+                                        currentState = STATE_GAME_OVER;
+                                        selectedMenuItem = 0;
+                                        cout << "Game Over!" << endl;
+                                    }
+                                }
+                                // Add hit effect at spaceship position
+                                for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                                    if (!hitEffectActive[i]) {
+                                        hitEffectRow[i] = r + 1;
+                                        hitEffectCol[i] = c;
+                                        hitEffectTimer[i] = 0.0f;
+                                        hitEffectActive[i] = true;
+                                        break;
+                                    }
+                                }
+                                // Spaceship stays, bullet is removed (already cleared above)
+                            }
+                            // If hits enemy or meteor (2 or 4), pass through
+                            else if (grid[r + 1][c] == 2 || grid[r + 1][c] == 4) {
+                                grid[r + 1][c] = 6; // bullet continues, enemy/meteor stays underneath
+                            }
+                            // Otherwise move normally
+                            else if (grid[r + 1][c] == 0 || grid[r + 1][c] == 6) {
+                                grid[r + 1][c] = 6;
+                            }
+                        }
+                    }
+                }
+            }
+            bossBulletMoveClock.restart();
+        }
+
+        // Move bullets up every 0.08 seconds (25% faster than 0.1s)
+        if (bulletMoveClock.getElapsedTime().asSeconds() >= 0.05f) {
+            // Move bullets from top to bottom to avoid overwriting
+            for (int r = 0; r < ROWS; r++) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 3) { // if there's a bullet
+                        // Check if bullet reached the top
+                        if (r == 0) {
+                            grid[r][c] = 0; // remove bullet at top
+                            cout << "Bullet removed at top" << endl;
+                        } else {
+                            grid[r][c] = 0; // clear current position
+                            // Move up only if next row is empty or a bullet
+                            if (grid[r - 1][c] == 0 || grid[r - 1][c] == 3) {
+                                grid[r - 1][c] = 3;
+                            }
+                            // If it hits boss bullet (value 6), pass through it
+                            else if (grid[r - 1][c] == 6) {
+                                grid[r - 1][c] = 3; // Player bullet continues moving up through boss bullet
+                            }
+                            // If it hits meteor (value 2), both get destroyed
+                            else if (grid[r - 1][c] == 2) {
+                                cout << "Bullet hit meteor!" << endl;
+                                grid[r - 1][c] = 0; // both disappear
+                                // Add hit effect
+                                for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                                    if (!hitEffectActive[i]) {
+                                        hitEffectRow[i] = r - 1;
+                                        hitEffectCol[i] = c;
+                                        hitEffectTimer[i] = 0.0f;
+                                        hitEffectActive[i] = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            // If it hits enemy (value 4), enemy destroyed and score increased
+                            else if (grid[r - 1][c] == 4) {
+                                score += 1; // Add 1 point for destroying enemy
+                                cout << "Bullet hit enemy! +1 point. Score: " << score << endl;
+                                grid[r - 1][c] = 0; // both disappear
+                                // Add hit effect
+                                for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                                    if (!hitEffectActive[i]) {
+                                        hitEffectRow[i] = r - 1;
+                                        hitEffectCol[i] = c;
+                                        hitEffectTimer[i] = 0.0f;
+                                        hitEffectActive[i] = true;
+                                        break;
+                                    }
+                                }
+                                // Check for level up
+                                int scoreNeeded = level * 10;
+                                if (level < MAX_LEVEL && score >= scoreNeeded) {
+                                    level++;
+                                    score = 0; // Reset score for next level
+                                    // Clear all enemies and meteors from grid
+                                    for (int r = 0; r < ROWS; r++) {
+                                        for (int c = 0; c < COLS; c++) {
+                                            if (grid[r][c] == 2 || grid[r][c] == 4) {
+                                                grid[r][c] = 0;
+                                            }
+                                        }
+                                    }
+                                    // Move spaceship to center
+                                    grid[ROWS-1][spaceshipCol] = 0;
+                                    spaceshipCol = COLS / 2;
+                                    grid[ROWS-1][spaceshipCol] = 1;
+                                    // Enter level up state
+                                    currentState = STATE_LEVEL_UP;
+                                    levelUpTimer.restart();
+                                    levelUpBlinkClock.restart();
+                                    cout << "Level Up! Now at Level " << level << endl;
+                                } else if (level >= MAX_LEVEL && score >= scoreNeeded) {
+                                    // Victory!
+                                    currentState = STATE_VICTORY;
+                                    selectedMenuItem = 0;
+                                    cout << "Victory! Game Complete!" << endl;
+                                }
+                            }
+                            // If it hits boss (value 5), boss destroyed and score increased (worth 3 points)
+                            else if (grid[r - 1][c] == 5) {
+                                score += 3; // Add 3 points for destroying boss
+                                cout << "Bullet hit boss! +3 points. Score: " << score << endl;
+                                grid[r - 1][c] = 0; // both disappear
+                                // Add hit effect
+                                for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                                    if (!hitEffectActive[i]) {
+                                        hitEffectRow[i] = r - 1;
+                                        hitEffectCol[i] = c;
+                                        hitEffectTimer[i] = 0.0f;
+                                        hitEffectActive[i] = true;
+                                        break;
+                                    }
+                                }
+                                // Check for level up
+                                int scoreNeeded = level * 10;
+                                if (level < MAX_LEVEL && score >= scoreNeeded) {
+                                    level++;
+                                    score = 0;
+                                    // Clear all enemies, meteors, and bosses from grid
+                                    for (int r = 0; r < ROWS; r++) {
+                                        for (int c = 0; c < COLS; c++) {
+                                            if (grid[r][c] == 2 || grid[r][c] == 4 || grid[r][c] == 5 || grid[r][c] == 6) {
+                                                grid[r][c] = 0;
+                                            }
+                                        }
+                                    }
+                                    // Move spaceship to center
+                                    grid[ROWS-1][spaceshipCol] = 0;
+                                    spaceshipCol = COLS / 2;
+                                    grid[ROWS-1][spaceshipCol] = 1;
+                                    // Enter level up state
+                                    currentState = STATE_LEVEL_UP;
+                                    levelUpTimer.restart();
+                                    levelUpBlinkClock.restart();
+                                    cout << "Level Up! Now at Level " << level << endl;
+                                } else if (level >= MAX_LEVEL && score >= scoreNeeded) {
+                                    // Victory!
+                                    currentState = STATE_VICTORY;
+                                    selectedMenuItem = 0;
+                                    cout << "Victory! Game Complete!" << endl;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            bulletMoveClock.restart();
+        }
+
+        // Update hit effect timers
+        float deltaTime = hitEffectClock.getElapsedTime().asSeconds();
+        for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+            if (hitEffectActive[i]) {
+                hitEffectTimer[i] += deltaTime;
+                if (hitEffectTimer[i] >= HIT_EFFECT_DURATION) {
+                    hitEffectActive[i] = false; // deactivate after duration
+                }
+            }
+        }
+        hitEffectClock.restart();
+
+        // Update invincibility timer
+        if (isInvincible && invincibilityTimer.getElapsedTime().asSeconds() >= INVINCIBILITY_DURATION) {
+            isInvincible = false;
+            cout << "Invincibility ended" << endl;
+        }
+        
+        } // End of PLAYING state
+
+        // Handle level up state
+        else if (currentState == STATE_LEVEL_UP) {
+            // Blink effect (toggle every 0.3 seconds)
+            if (levelUpBlinkClock.getElapsedTime().asSeconds() >= 0.3f) {
+                levelUpBlinkState = !levelUpBlinkState;
+                levelUpBlinkClock.restart();
+            }
+            
+            // After 2 seconds, return to playing
+            if (levelUpTimer.getElapsedTime().asSeconds() >= 2.0f) {
+                currentState = STATE_PLAYING;
+                meteorSpawnClock.restart();
+                meteorMoveClock.restart();
+                enemySpawnClock.restart();
+                enemyMoveClock.restart();
+                bossSpawnClock.restart();
+                bossMoveClock.restart();
+                bossBulletMoveClock.restart();
+            }
+        }
+
+        // Handle victory state
+        else if (currentState == STATE_VICTORY) {
+            // Victory navigation with cooldown
+            if (menuClock.getElapsedTime() >= menuCooldown) {
+                bool menuAction = false;
+                
+                if (Keyboard::isKeyPressed(Keyboard::Up) || Keyboard::isKeyPressed(Keyboard::W)) {
+                    selectedMenuItem = (selectedMenuItem - 1 + 2) % 2;
+                    menuAction = true;
+                }
+                else if (Keyboard::isKeyPressed(Keyboard::Down) || Keyboard::isKeyPressed(Keyboard::S)) {
+                    selectedMenuItem = (selectedMenuItem + 1) % 2;
+                    menuAction = true;
+                }
+                else if (Keyboard::isKeyPressed(Keyboard::Enter) || Keyboard::isKeyPressed(Keyboard::Space)) {
+                    if (selectedMenuItem == 0) { // Restart
+                        currentState = STATE_PLAYING;
+                        lives = 3;
+                        score = 0;
+                        level = 1;
+                        isInvincible = false;
+                        for (int r = 0; r < ROWS; r++) {
+                            for (int c = 0; c < COLS; c++) {
+                                grid[r][c] = 0;
+                            }
+                        }
+                        spaceshipCol = COLS / 2;
+                        grid[ROWS-1][spaceshipCol] = 1;
+                        meteorSpawnClock.restart();
+                        meteorMoveClock.restart();
+                        enemySpawnClock.restart();
+                        enemyMoveClock.restart();
+                        bossSpawnClock.restart();
+                        bossMoveClock.restart();
+                        bossBulletMoveClock.restart();
+                        bulletMoveClock.restart();
+                    }
+                    else if (selectedMenuItem == 1) { // Main Menu
+                        currentState = STATE_MENU;
+                        selectedMenuItem = 0;
+                    }
+                    menuAction = true;
+                }
+                
+                if (menuAction) {
+                    menuClock.restart();
+                }
+            }
+        }
+
+        // Handle pause state
+        else if (currentState == STATE_PAUSED) {
+            // Pause navigation with cooldown
+            if (menuClock.getElapsedTime() >= menuCooldown) {
+                bool menuAction = false;
+                
+                if (Keyboard::isKeyPressed(Keyboard::Up) || Keyboard::isKeyPressed(Keyboard::W)) {
+                    selectedMenuItem = (selectedMenuItem - 1 + 3) % 3;
+                    menuAction = true;
+                }
+                else if (Keyboard::isKeyPressed(Keyboard::Down) || Keyboard::isKeyPressed(Keyboard::S)) {
+                    selectedMenuItem = (selectedMenuItem + 1) % 3;
+                    menuAction = true;
+                }
+                else if (Keyboard::isKeyPressed(Keyboard::Enter) || Keyboard::isKeyPressed(Keyboard::Space)) {
+                    if (selectedMenuItem == 0) { // Resume
+                        currentState = STATE_PLAYING;
+                        cout << "Game Resumed" << endl;
+                    }
+                    else if (selectedMenuItem == 1) { // Restart
+                        currentState = STATE_PLAYING;
+                        lives = 3;
+                        score = 0;
+                        level = 1;
+                        isInvincible = false;
+                        for (int r = 0; r < ROWS; r++) {
+                            for (int c = 0; c < COLS; c++) {
+                                grid[r][c] = 0;
+                            }
+                        }
+                        spaceshipCol = COLS / 2;
+                        grid[ROWS-1][spaceshipCol] = 1;
+                        meteorSpawnClock.restart();
+                        meteorMoveClock.restart();
+                        enemySpawnClock.restart();
+                        enemyMoveClock.restart();
+                        bossSpawnClock.restart();
+                        bossMoveClock.restart();
+                        bossBulletMoveClock.restart();
+                        bulletMoveClock.restart();
+                        cout << "Game Restarted" << endl;
+                    }
+                    else if (selectedMenuItem == 2) { // Main Menu
+                        currentState = STATE_MENU;
+                        selectedMenuItem = 0;
+                    }
+                    menuAction = true;
+                }
+                else if (Keyboard::isKeyPressed(Keyboard::P)) { // P to resume
+                    currentState = STATE_PLAYING;
+                    cout << "Game Resumed" << endl;
+                    menuAction = true;
+                }
+                
+                if (menuAction) {
+                    menuClock.restart();
+                }
+            }
+        }
+
+        // Rendering
+        window.clear(Color(40, 40, 40));
+
+        if (currentState == STATE_MENU) {
+            // Draw menu screen
+            window.draw(menuBackground);
+            window.draw(menuTitle);
+            for (int i = 0; i < 4; i++) {
+                if (i == selectedMenuItem) {
+                    menuItems[i].setFillColor(Color::Yellow);
+                } else {
+                    menuItems[i].setFillColor(Color::White);
+                }
+                window.draw(menuItems[i]);
+            }
+            window.draw(menuInstructions);
+        }
+        else if (currentState == STATE_PLAYING) {
+            // Draw game screen
+            window.draw(background);
+            window.draw(gameBox);
+
+            // Draw meteors, bullets, and spaceship
+            for (int r = 0; r < ROWS; r++) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 1) { // spaceship
+                        spaceship.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        // Blink during invincibility (show/hide every 0.1 seconds)
+                        if (!isInvincible || ((int)(invincibilityTimer.getElapsedTime().asMilliseconds() / 100) % 2 == 0)) {
+                            window.draw(spaceship);
+                        }
+                    }
+                    else if (grid[r][c] == 2) { // meteor
+                        meteor.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        window.draw(meteor);
+                    }
+                    else if (grid[r][c] == 3) { // bullet
+                        // Center the bullet horizontally within the cell since it's narrower
+                        float bulletWidth = CELL_SIZE * 0.3f;
+                        float xOffset = (CELL_SIZE - bulletWidth) / 2.0f;
+                        bullet.setPosition(MARGIN + c * CELL_SIZE + xOffset, MARGIN + r * CELL_SIZE);
+                        window.draw(bullet);
+                    }
+                    else if (grid[r][c] == 4) { // enemy
+                        enemy.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        window.draw(enemy);
+                    }
+                    else if (grid[r][c] == 5) { // boss
+                        bossEnemy.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        window.draw(bossEnemy);
+                    }
+                    else if (grid[r][c] == 6) { // boss bullet
+                        // Center the bullet horizontally within the cell
+                        float bulletWidth = CELL_SIZE * 0.3f;
+                        float xOffset = (CELL_SIZE - bulletWidth) / 2.0f;
+                        bossBullet.setPosition(MARGIN + c * CELL_SIZE + xOffset, MARGIN + r * CELL_SIZE);
+                        window.draw(bossBullet);
+                    }
+                }
+            }
+
+            // Draw hit effects
+            for (int i = 0; i < MAX_HIT_EFFECTS; i++) {
+                if (hitEffectActive[i]) {
+                    bulletHit.setPosition(MARGIN + hitEffectCol[i] * CELL_SIZE, MARGIN + hitEffectRow[i] * CELL_SIZE);
+                    window.draw(bulletHit);
+                }
+            }
+
+            // Update and draw lives display
+            char livesBuffer[20];
+            sprintf(livesBuffer, "Lives: %d", lives);
+            livesText.setString(livesBuffer);
+            
+            // Update and draw score display
+            char scoreBuffer[20];
+            sprintf(scoreBuffer, "Score: %d", score);
+            scoreText.setString(scoreBuffer);
+            
+            // Update and draw level display
+            char levelBuffer[20];
+            sprintf(levelBuffer, "Level: %d", level);
+            levelText.setString(levelBuffer);
+            
+            // Draw title text, lives, score, and level
+            window.draw(title);
+            window.draw(livesText);
+            window.draw(scoreText);
+            window.draw(levelText);
+        }
+        else if (currentState == STATE_LEVEL_UP) {
+            // Draw level up screen (blink effect)
+            window.draw(background);
+            window.draw(gameBox);
+            
+            // Draw spaceship at center
+            spaceship.setPosition(MARGIN + spaceshipCol * CELL_SIZE, MARGIN + (ROWS-1) * CELL_SIZE);
+            window.draw(spaceship);
+            
+            // Draw blinking "LEVEL UP!" text
+            if (levelUpBlinkState) {
+                window.draw(levelUpText);
+            }
+            
+            // Show updated level info
+            char levelBuffer[20];
+            sprintf(levelBuffer, "Level: %d", level);
+            levelText.setString(levelBuffer);
+            window.draw(title);
+            window.draw(levelText);
+        }
+        else if (currentState == STATE_PAUSED) {
+            // Draw paused screen (show game in background)
+            window.draw(background);
+            window.draw(gameBox);
+            
+            // Draw current game state
+            for (int r = 0; r < ROWS; r++) {
+                for (int c = 0; c < COLS; c++) {
+                    if (grid[r][c] == 1) { // spaceship
+                        spaceship.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        window.draw(spaceship);
+                    }
+                    else if (grid[r][c] == 2) { // meteor
+                        meteor.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        window.draw(meteor);
+                    }
+                    else if (grid[r][c] == 3) { // bullet
+                        float bulletWidth = CELL_SIZE * 0.3f;
+                        float xOffset = (CELL_SIZE - bulletWidth) / 2.0f;
+                        bullet.setPosition(MARGIN + c * CELL_SIZE + xOffset, MARGIN + r * CELL_SIZE);
+                        window.draw(bullet);
+                    }
+                    else if (grid[r][c] == 4) { // enemy
+                        enemy.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        window.draw(enemy);
+                    }
+                    else if (grid[r][c] == 5) { // boss
+                        bossEnemy.setPosition(MARGIN + c * CELL_SIZE, MARGIN + r * CELL_SIZE);
+                        window.draw(bossEnemy);
+                    }
+                    else if (grid[r][c] == 6) { // boss bullet
+                        float bulletWidth = CELL_SIZE * 0.3f;
+                        float xOffset = (CELL_SIZE - bulletWidth) / 2.0f;
+                        bossBullet.setPosition(MARGIN + c * CELL_SIZE + xOffset, MARGIN + r * CELL_SIZE);
+                        window.draw(bossBullet);
+                    }
+                }
+            }
+            
+            // Draw semi-transparent overlay
+            RectangleShape overlay(Vector2f(COLS * CELL_SIZE, ROWS * CELL_SIZE));
+            overlay.setPosition(MARGIN, MARGIN);
+            overlay.setFillColor(Color(0, 0, 0, 150)); // Semi-transparent black
+            window.draw(overlay);
+            
+            // Draw pause menu
+            window.draw(pauseTitle);
+            for (int i = 0; i < 3; i++) {
+                if (i == selectedMenuItem) {
+                    pauseItems[i].setFillColor(Color::Yellow);
+                } else {
+                    pauseItems[i].setFillColor(Color::White);
+                }
+                window.draw(pauseItems[i]);
+            }
+        }
+        else if (currentState == STATE_VICTORY) {
+            // Draw victory screen
+            window.draw(menuBackground);
+            window.draw(victoryTitle);
+            
+            // Draw menu items with highlight
+            for (int i = 0; i < 2; i++) {
+                if (i == selectedMenuItem) {
+                    victoryItems[i].setFillColor(Color::Yellow);
+                } else {
+                    victoryItems[i].setFillColor(Color::White);
+                }
+                window.draw(victoryItems[i]);
+            }
+            
+            window.draw(victoryInstructions);
+        }
+        else if (currentState == STATE_GAME_OVER) {
+            // Draw game over screen
+            window.draw(menuBackground);
+            window.draw(gameOverTitle);
+            
+            // Draw menu items with highlight
+            for (int i = 0; i < 2; i++) {
+                if (i == selectedMenuItem) {
+                    gameOverItems[i].setFillColor(Color::Yellow);
+                } else {
+                    gameOverItems[i].setFillColor(Color::White);
+                }
+                window.draw(gameOverItems[i]);
+            }
+            
+            window.draw(gameOverInstructions);
+        }
+
+        window.display();
+        sleep(milliseconds(50)); // small delay for movement
+    }
+
+    return 0;
+}

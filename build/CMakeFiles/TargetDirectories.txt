@@ -1,0 +1,3 @@
+/home/abdur/VSCode/pf_project/build/CMakeFiles/sfml_project.dir
+/home/abdur/VSCode/pf_project/build/CMakeFiles/edit_cache.dir
+/home/abdur/VSCode/pf_project/build/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run SFML",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/sfml_project",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "preLaunchTask": "build only"
+        }
+    ]
+}

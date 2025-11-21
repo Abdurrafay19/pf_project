@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/home/abdur/VSCode/pf_project/build",
+  "command": "/usr/bin/g++   -g -std=gnu++17 -o CMakeFiles/sfml_project.dir/main.cpp.o -c /home/abdur/VSCode/pf_project/main.cpp",
+  "file": "/home/abdur/VSCode/pf_project/main.cpp",
+  "output": "CMakeFiles/sfml_project.dir/main.cpp.o"
+}
+]
